@@ -161,6 +161,53 @@ retrieved without a source directory has `snapshot_current: null`; its historica
 review state does not establish current approval validity. The CLI always checks
 sources when showing records. Streamlit will call these same services.
 
+## Approved Follow-up Delivery
+
+After a human approves a current assessment, the application can queue a follow-up
+task in a durable outbox, then deliver it to a separate local task inbox. The task
+coordinates review follow-up; it does **not** authorize a launch, clear findings,
+or change an At Risk assessment to Ready. The model proposes action text; Python
+constructs the operation and the caller supplies the connector.
+
+For a current, approved Ready or At Risk assessment, run:
+
+```bash
+python -m app.workflow_cli --as-of 2026-08-08 enqueue ASSESSMENT_ID
+python -m app.workflow_cli --as-of 2026-08-08 dispatch DELIVERY_ID
+python -m app.workflow_cli deliveries
+python -m app.workflow_cli tasks
+```
+
+Use the same `--db`, `--data-dir`, and `--as-of` values used for assessment/review.
+`enqueue` returns the delivery ID. The original sample has blockers and cannot be
+approved or delivered; `tests/test_delivery.py` constructs a valid ready assortment
+to exercise the successful path. `--inbox-db` selects the downstream SQLite store.
+
+| Business need | Implementation | Reviewable evidence |
+| --- | --- | --- |
+| Keep unreviewed or stale results from producing downstream work | Current approval checked at queue time and immediately before sending | Unapproved and stale-snapshot tests in `tests/test_delivery.py` |
+| Recover delivery after restart | Persisted payload and pending/failed delivery state | Restart and retry tests |
+| Avoid duplicate tasks when a response is lost | Stable key per assessment; receiver deduplicates atomically | Timeout after receiver acceptance, followed by retry |
+| Inspect what happened | Append-only delivery attempts and stored receipt | Failure type, cancellation, and successful receipt assertions |
+| Prevent competing local workers from sending twice | Serialized SQLite dispatch transaction | Concurrent worker test |
+
+Delivery states are `pending`, `failed`, `delivered`, and `cancelled`. Repeat enqueue
+returns the existing intent. Repeat dispatch of a delivered/cancelled intent makes no
+new call. Failed intents can be retried by dispatching the same ID. Source/date changes
+cancel pending or failed delivery; a new approved assessment creates a new intent.
+Already delivered tasks remain historical records and are not automatically recalled.
+
+This is a **local integration demonstration**, not an authenticated remote integration.
+`TaskConnector` is the replacement boundary. Remote adapters must support the same
+idempotency key semantics and bounded timeouts; otherwise ambiguous failures cannot
+guarantee duplicate-free retries. Dispatch holds a workflow database write transaction
+while calling the connector, suitable for this small local demo rather than a scalable
+worker queue. Source files must remain stable during sending: freshness is checked
+before dispatch, but file writes and an external side effect cannot be made atomic.
+Exception types are recorded; raw exception strings are omitted to avoid copying
+credentials or response bodies into history. There are no webhooks, OAuth, authenticated
+reviewers, automatic retry scheduling, or external notifications yet.
+
 ## Architecture
 
 ```text
