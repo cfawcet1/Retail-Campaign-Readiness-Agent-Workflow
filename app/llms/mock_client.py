@@ -4,6 +4,7 @@ from app.ontology.models import LaunchReadinessContext, Severity, ResolutionStat
 
 
 class MockLLMClient(LLMClient):
+    metadata = {'backend': 'mock', 'mode': 'simulated'}
 
     def generate(self, context: LaunchReadinessContext) -> dict:
         blockers = [

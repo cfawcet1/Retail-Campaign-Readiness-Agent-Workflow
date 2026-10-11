@@ -11,6 +11,7 @@ class AnthropicClient(LLMClient):
 
     def __init__(self, model: str = "claude-sonnet-4-5"):
         self.model = model
+        self.metadata = {'backend': 'anthropic', 'model': model, 'mode': 'live'}
         self.client = anthropic.Anthropic(
             api_key=os.environ.get("ANTHROPIC_API_KEY")
         )

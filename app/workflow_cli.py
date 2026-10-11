@@ -49,7 +49,7 @@ def main():
             result = LocalTaskInbox(args.inbox_db).tasks()
         else:
             result = service.review(args.id, args.data_dir, args.reviewer, args.decision, args.reason, args.as_of)
-    except (WorkflowError, InputValidationError) as exc:
+    except (WorkflowError, InputValidationError, ValueError) as exc:
         parser.exit(1, f'Workflow stopped: {exc}\n')
     print(json.dumps(result, indent=2))
 

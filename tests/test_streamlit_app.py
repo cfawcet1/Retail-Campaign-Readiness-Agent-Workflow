@@ -12,6 +12,7 @@ APP = Path(__file__).resolve().parents[1] / 'streamlit_app.py'
 @pytest.fixture
 def ui(tmp_path, monkeypatch):
     monkeypatch.setenv('READINESS_DEMO_DIR', str(tmp_path))
+    monkeypatch.setenv('READINESS_UI_BACKEND', 'mock')
     return AppTest.from_file(str(APP), default_timeout=15).run(), tmp_path
 
 
@@ -125,3 +126,45 @@ def test_scenario_switch_keeps_histories_separate(ui):
     assess(at, 'blocked')
     at.selectbox(key='scenario').select('ready').run()
     assert at.metric[0].value == 'Ready'
+
+
+def test_live_ui_requires_key_without_mock_fallback(ui, monkeypatch):
+    at, root = ui
+    monkeypatch.delenv('OPENAI_API_KEY', raising=False)
+    at.selectbox(key='inference_backend').select('openai').run()
+    assert not at.exception
+    assert at.button(key='assess').disabled
+    assert any('Configure OPENAI_API_KEY' in warning.value for warning in at.warning)
+    assert WorkflowService(root / 'live-openai' / 'ready' / 'workflow.sqlite3').history() == []
+    at.selectbox(key='scenario').select('model_failure').run()
+    assert not at.button(key='assess').disabled
+    click(at, 'Run assessment')
+    assert at.metric[0].value == 'Unknown'
+    assert WorkflowService(root / 'model_failure' / 'workflow.sqlite3').history()[0]['inference']['mode'] == 'simulated'
+
+
+def test_live_ui_uses_provider_and_separates_saved_history(ui, monkeypatch):
+    import json
+    from types import SimpleNamespace
+    import openai
+    at, root = ui
+    monkeypatch.setenv('OPENAI_API_KEY', 'test-key-not-for-network')
+    called = []
+    def create(**kwargs):
+        called.append(kwargs)
+        payload = {'overall_status': 'Ready', 'executive_summary': 'Live adapter test response.',
+                   'recommended_actions': [], 'confidence': 'High',
+                   'human_review_required': False, 'human_review_reason': None}
+        return SimpleNamespace(id='resp_ui', status='completed', output=[], usage=None,
+                               output_text=json.dumps(payload))
+    monkeypatch.setattr(openai, 'OpenAI', lambda **kwargs: SimpleNamespace(responses=SimpleNamespace(create=create)))
+    assess(at, 'ready')  # Save a mock assessment first.
+    at.selectbox(key='inference_backend').select('openai').run()
+    assert not at.metric  # The existing mock result cannot appear as a live result.
+    click(at, 'Run assessment')
+    assert len(called) == 1
+    record = WorkflowService(root / 'live-openai' / 'ready' / 'workflow.sqlite3').history()[0]
+    assert record['inference']['mode'] == 'live'
+    assert record['inference']['response_id'] == 'resp_ui'
+    assert 'test-key-not-for-network' not in str(record)
+    assert len(WorkflowService(root / 'ready' / 'workflow.sqlite3').history()) == 1

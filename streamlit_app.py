@@ -9,6 +9,7 @@ from app.demo.scenarios import SCENARIOS, DEMO_DATE, DemoModel, LostDeliveryResp
 from app.workflow.service import WorkflowService, WorkflowError
 from app.workflow.delivery import DeliveryService, LocalTaskInbox
 from app.validation.inputs import InputValidationError
+from app.llms.factory import get_llm_client
 
 st.set_page_config(page_title='Campaign readiness', page_icon='📋', layout='wide')
 st.markdown('''<style>
@@ -20,20 +21,51 @@ st.markdown('''<style>
 </style>''', unsafe_allow_html=True)
 
 root = Path(os.environ.get('READINESS_DEMO_DIR', str(Path(__file__).resolve().parent / '.demo')))
+
+
+def configured_openai_key():
+    key = os.environ.get('OPENAI_API_KEY')
+    if not key:
+        try:
+            key = st.secrets.get('OPENAI_API_KEY')
+        except Exception:
+            # Missing/malformed server secrets must not display credential-bearing diagnostics.
+            key = None
+    return key.strip() if isinstance(key, str) and key.strip() else None
+
+
 with st.sidebar:
     st.title('Campaign readiness')
     st.caption('A retail workflow demonstration')
+    backends = ['openai', 'mock']
+    initial_backend = os.environ.get('READINESS_UI_BACKEND', 'openai')
+    backend = st.selectbox('Assessment mode', backends,
+        index=backends.index(initial_backend) if initial_backend in backends else 0,
+        format_func=lambda value: 'Live OpenAI' if value == 'openai' else 'Simulated demo', key='inference_backend')
     scenario = st.selectbox('Choose a scenario', list(SCENARIOS),
                             format_func=lambda key: SCENARIOS[key][0], key='scenario')
     st.write(SCENARIOS[scenario][1])
     st.divider()
     st.caption(f'Reproducible assessment date: {DEMO_DATE:%B %d, %Y}')
-    st.caption('Synthetic data · simulated model · local task inbox')
+    forced_simulation = scenario in ('model_failure', 'contradiction')
+    effective_backend = 'mock' if forced_simulation else backend
+    key = configured_openai_key() if effective_backend == 'openai' else None
+    model = os.environ.get('OPENAI_MODEL') or 'gpt-4.1-mini'
+    can_run = effective_backend == 'mock' or bool(key)
+    if forced_simulation:
+        st.info('This scenario deliberately simulates a faulty model response. No live API call is made.')
+    elif effective_backend == 'openai':
+        st.caption(f'Live model: {model}')
+        if not key:
+            st.warning('Configure OPENAI_API_KEY on the server to run live assessments. No mock fallback is used.')
+        st.caption('Live assessments send synthetic findings to OpenAI and incur API usage.')
+    st.caption('Synthetic data · local task inbox')
 
-data_dir = prepare_scenario(root, scenario)
-workflow = WorkflowService(root / scenario / 'workflow.sqlite3')
+mode_root = root / 'live-openai' if effective_backend == 'openai' else root
+data_dir = prepare_scenario(mode_root, scenario)
+workflow = WorkflowService(mode_root / scenario / 'workflow.sqlite3')
 deliveries = DeliveryService(workflow)
-inbox = LocalTaskInbox(root / scenario / 'inbox.sqlite3')
+inbox = LocalTaskInbox(mode_root / scenario / 'inbox.sqlite3')
 
 st.caption('LAUNCH OPERATIONS / SOFT LOUNGE')
 st.title('Is this campaign ready?')
@@ -47,14 +79,15 @@ left, right = st.columns([3, 1])
 with left:
     st.subheader(SCENARIOS[scenario][0])
 with right:
-    if st.button('Run assessment', type='primary', key='assess', use_container_width=True):
+    if st.button('Run assessment', type='primary', key='assess', disabled=not can_run, use_container_width=True):
         try:
             with st.spinner('Checking sources, analyzing findings, and enforcing readiness rules…'):
-                record = workflow.assess(data_dir, DemoModel(scenario), DEMO_DATE)
-            st.session_state[f'selected_{scenario}'] = record['id']
+                client = get_llm_client('openai', api_key=key, model=model) if effective_backend == 'openai' else DemoModel(scenario)
+                record = workflow.assess(data_dir, client, DEMO_DATE)
+            st.session_state[f'selected_{scenario}_{effective_backend}'] = record['id']
             st.session_state['flash'] = 'Assessment saved with its evidence and source snapshot.'
             st.rerun()
-        except (WorkflowError, InputValidationError) as exc:
+        except (WorkflowError, InputValidationError, ValueError) as exc:
             st.error(str(exc))
 
 records = workflow.history(data_dir, DEMO_DATE)
@@ -67,13 +100,17 @@ if not records:
     st.stop()
 
 identifiers = [row['id'] for row in records]
-selection_key = f'selected_{scenario}'
+selection_key = f'selected_{scenario}_{effective_backend}'
 if st.session_state.get(selection_key) not in identifiers:
     st.session_state[selection_key] = identifiers[0]
 selected = st.selectbox('Saved assessment', identifiers,
     format_func=lambda identifier: next(f"{r['created_at'][:19].replace('T', ' ')} UTC · {r['result']['overall_status']} · {r['id'][:8]}" for r in records if r['id'] == identifier),
     key=selection_key)
 record = workflow.get(selected, data_dir, DEMO_DATE)
+inference = record['inference']
+st.caption('Saved inference: ' + inference.get('mode', 'not recorded for this older assessment')
+           + (' · ' + inference['backend'] if inference.get('backend') else '')
+           + (' · ' + inference['model'] if inference.get('model') else ''))
 result, context = record['result'], record['context']
 blockers = [finding for finding in context['signals'] if finding['severity'] == 'blocker']
 quality = [finding for finding in context['signals'] if finding['signal_id'].startswith('DQ-')]
@@ -88,7 +125,7 @@ if not record['snapshot_current']:
 overview, evidence, review, history = st.tabs(['Launch overview', 'Findings & evidence', 'Review & follow-up', 'History'])
 with overview:
     st.subheader('Assessment')
-    if record['model'].get('overall_status') != result['overall_status']:
+    if not isinstance(record['model'], dict) or record['model'].get('overall_status') != result['overall_status']:
         st.info('The model response was changed or rejected by validation and business rules. The readiness shown above governs review.')
     st.caption('Model explanation / validated fallback')
     st.write(result['executive_summary'])
@@ -107,6 +144,7 @@ with overview:
         with first:
             st.write('Original model response')
             st.json(record['model'])
+            st.json(record['inference'])
         with second:
             st.write('Validated and enforced result')
             st.json(result)
@@ -216,6 +254,8 @@ with history:
         'Readiness': row['result']['overall_status'], 'Review state': row['review_state'],
         'Current snapshot': row['snapshot_current'],
         'Reviewer': row['review']['reviewer'] if row['review'] else '',
+        'Inference': row['inference'].get('mode', 'not recorded'),
+        'Model': row['inference'].get('model', ''),
         'Reason': row['review']['reason'] if row['review'] else '',
     } for row in records], hide_index=True, use_container_width=True)
     st.subheader('Delivery history')

@@ -37,7 +37,10 @@ def main():
           f"{len(context.conflicts)} conflicts detected.")
 
     print("Generating readiness assessment...")
-    client = get_llm_client()
+    try:
+        client = get_llm_client()
+    except ValueError as exc:
+        parser.exit(1, f'Assessment stopped: {exc}\n')
     llm_response = enforce_readiness(context, client.generate(context))
 
     report = format_report(context, llm_response)

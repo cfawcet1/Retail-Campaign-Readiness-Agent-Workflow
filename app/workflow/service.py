@@ -59,6 +59,10 @@ class WorkflowService:
                     reason TEXT NOT NULL, reviewed_at TEXT NOT NULL
                 );
             ''')
+            db.execute('BEGIN IMMEDIATE')
+            columns = {row['name'] for row in db.execute('PRAGMA table_info(assessments)')}
+            if 'inference_json' not in columns:
+                db.execute("ALTER TABLE assessments ADD COLUMN inference_json TEXT NOT NULL DEFAULT '{}'")
 
     @contextmanager
     def connect(self):
@@ -81,10 +85,13 @@ class WorkflowService:
             raise WorkflowError('Sources changed during assessment; rerun assessment.')
         identifier = str(uuid4())
         with self.connect() as db:
-            db.execute('INSERT INTO assessments VALUES (?,?,?,?,?,?,?)', (
+            db.execute('INSERT INTO assessments '
+                       '(id,created_at,assessment_date,source_fingerprint,context_json,model_json,result_json,inference_json) '
+                       'VALUES (?,?,?,?,?,?,?,?)', (
                 identifier, timestamp(), as_of.isoformat(), before,
                 json.dumps(asdict(context), default=encode),
                 json.dumps(model, default=encode), json.dumps(result),
+                json.dumps(getattr(client, 'metadata', {})),
             ))
         return self.get(identifier, data_dir, as_of)
 
@@ -97,6 +104,7 @@ class WorkflowService:
         record = dict(row)
         for name in ('context', 'model', 'result'):
             record[name] = json.loads(record.pop(name + '_json'))
+        record['inference'] = json.loads(record.pop('inference_json'))
         record['review'] = dict(review) if review else None
         record['review_state'] = ('approved' if review['decision'] == 'approve' else 'rejected') if review else 'pending_review'
         record['snapshot_current'] = None

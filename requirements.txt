@@ -1,3 +1,5 @@
 anthropic>=0.20.0
 pytest>=8.0.0
 streamlit>=1.40,<2
+openai>=1.68,<4
+toml>=0.10.2
