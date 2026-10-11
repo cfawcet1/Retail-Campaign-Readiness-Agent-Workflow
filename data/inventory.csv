@@ -1,0 +1,11 @@
+sku,product_name,color,size,units_available,expected_demand,replenishment_on_order
+SL-201-ONX-S,Soft Lounge Long Slip Dress,onyx,S,320,300,false
+SL-201-ONX-XL,Soft Lounge Long Slip Dress,onyx,XL,280,290,false
+SL-201-MRB-S,Soft Lounge Long Slip Dress,marble,S,310,300,false
+SL-202-ONX-S,Soft Lounge Short Slip Dress,onyx,S,250,240,false
+SL-202-ONX-2X,Soft Lounge Short Slip Dress,onyx,2X,38,180,true
+SL-203-ONX-S,Soft Lounge Bralette,onyx,S,400,380,false
+SL-203-DSR-2X,Soft Lounge Bralette,dusty rose,2X,22,150,false
+SL-204-ONX-S,Soft Lounge Straight Leg Pant,onyx,S,190,200,false
+SL-205-ONX-S,Soft Lounge Crop Top,onyx,S,340,320,false
+SL-205-MRB-S,Soft Lounge Crop Top,marble,S,290,300,false

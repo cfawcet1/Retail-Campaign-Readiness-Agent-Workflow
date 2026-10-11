@@ -1,0 +1,86 @@
+{
+  "launch": "Soft Lounge Spring Drop",
+  "launch_date": "2026-08-22",
+  "campaign_checklist": [
+    {
+      "id": "CC-001",
+      "category": "email",
+      "item": "Coming Soon email scheduled",
+      "owner": "CRM",
+      "required": true,
+      "status": "complete"
+    },
+    {
+      "id": "CC-002",
+      "category": "email",
+      "item": "Launch day email copy and assets approved",
+      "owner": "CRM",
+      "required": true,
+      "status": "complete"
+    },
+    {
+      "id": "CC-003",
+      "category": "sms",
+      "item": "SMS drop notification scheduled",
+      "owner": "CRM",
+      "required": true,
+      "status": "incomplete"
+    },
+    {
+      "id": "CC-004",
+      "category": "influencer",
+      "item": "Influencer seeding packages shipped",
+      "owner": "Marketing",
+      "required": true,
+      "status": "complete"
+    },
+    {
+      "id": "CC-005",
+      "category": "influencer",
+      "item": "Influencer posting schedule confirmed",
+      "owner": "Marketing",
+      "required": true,
+      "status": "incomplete"
+    },
+    {
+      "id": "CC-006",
+      "category": "creative",
+      "item": "Campaign creative assets approved",
+      "owner": "Creative",
+      "required": true,
+      "status": "complete"
+    },
+    {
+      "id": "CC-007",
+      "category": "creative",
+      "item": "PDP imagery uploaded for all SKUs",
+      "owner": "E-commerce",
+      "required": true,
+      "status": "complete"
+    },
+    {
+      "id": "CC-008",
+      "category": "site",
+      "item": "Product pages live in staging environment",
+      "owner": "E-commerce",
+      "required": true,
+      "status": "complete"
+    },
+    {
+      "id": "CC-009",
+      "category": "site",
+      "item": "Size guide updated for Soft Lounge fabric",
+      "owner": "E-commerce",
+      "required": true,
+      "status": "incomplete"
+    },
+    {
+      "id": "CC-010",
+      "category": "paid_media",
+      "item": "Paid social assets submitted to Meta",
+      "owner": "Paid Media",
+      "required": true,
+      "status": "complete"
+    }
+  ]
+}

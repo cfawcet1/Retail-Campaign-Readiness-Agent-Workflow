@@ -1,0 +1,56 @@
+{
+  "launch": "Soft Lounge Spring Drop",
+  "launch_date": "2026-08-22",
+  "products": [
+    {
+      "sku_base": "SL-201",
+      "name": "Soft Lounge Long Slip Dress",
+      "status": "active",
+      "description": "A relaxed slip dress in our signature Soft Lounge fabric.",
+      "colors": ["onyx", "marble", "sienna"],
+      "sizes": ["XS", "S", "M", "L", "XL", "2X", "3X"],
+      "care_instructions": "Machine wash cold, tumble dry low.",
+      "pdp_ready": true
+    },
+    {
+      "sku_base": "SL-202",
+      "name": "Soft Lounge Short Slip Dress",
+      "status": "active",
+      "description": "A shorter version of our signature slip dress.",
+      "colors": ["onyx", "marble"],
+      "sizes": ["XS", "S", "M", "L", "XL", "2X", "3X"],
+      "care_instructions": null,
+      "pdp_ready": true
+    },
+    {
+      "sku_base": "SL-203",
+      "name": "Soft Lounge Bralette",
+      "status": "active",
+      "description": "A barely-there bralette in ultra-soft fabric.",
+      "colors": ["onyx", "marble", "dusty rose"],
+      "sizes": ["XS", "S", "M", "L", "XL", "2X", "3X"],
+      "care_instructions": "Hand wash cold, lay flat to dry.",
+      "pdp_ready": true
+    },
+    {
+      "sku_base": "SL-204",
+      "name": "Soft Lounge Straight Leg Pant",
+      "status": "draft",
+      "description": "A relaxed straight leg pant in our signature fabric.",
+      "colors": ["onyx", "sienna"],
+      "sizes": ["XS", "S", "M", "L", "XL", "2X", "3X"],
+      "care_instructions": "Machine wash cold, tumble dry low.",
+      "pdp_ready": false
+    },
+    {
+      "sku_base": "SL-205",
+      "name": "Soft Lounge Crop Top",
+      "status": "active",
+      "description": "A fitted crop top with a subtle ribbed texture.",
+      "colors": ["onyx", "marble", "dusty rose"],
+      "sizes": ["XS", "S", "M", "L", "XL", "2X", "3X"],
+      "care_instructions": "Machine wash cold, tumble dry low.",
+      "pdp_ready": true
+    }
+  ]
+}
