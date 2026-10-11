@@ -17,6 +17,52 @@ python -m pytest -q
 The mock example requires no API key. For live inference, set `LLM_BACKEND=anthropic`
 and `ANTHROPIC_API_KEY` in your environment before running the application.
 
+## Interactive Streamlit Demo
+
+Run from the repository root after installing `requirements.txt`:
+
+```bash
+python -m streamlit run streamlit_app.py
+```
+
+Open the local URL printed by Streamlit (normally `http://localhost:8501`). No API
+key or external account is needed. The UI uses synthetic retail data and a simulated
+model. It calls the same `WorkflowService` and `DeliveryService` as the CLI.
+
+| Scenario | What a reviewer can observe |
+| --- | --- |
+| Ready launch | Complete sources and stock, approval with a reason, and delivery of one follow-up task |
+| Blocked launch | Inventory evidence explains Not Ready; approval is disabled and rejection remains available |
+| Incomplete data | All sources are present but an expected product variant is missing; review is required |
+| Stale inventory | Sufficient quantities do not hide an outdated inventory snapshot |
+| Model failure | Malformed model output produces Unknown, Low confidence, and no approved actions |
+| Model contradicts a blocker | Compare the model's Ready claim with the enforced Not Ready result |
+| Delivery response lost | First delivery fails after acceptance; retry completes with one inbox task and two attempts |
+
+Start with **Run assessment**. Inspect **Findings & evidence**, then open
+**Review & follow-up**, enter a reviewer and reason, and approve or reject. For an
+approved assessment, **Queue follow-up task**, then **Deliver task**. In the lost-response
+scenario, use **Retry delivery** and inspect the inbox task count and attempt history.
+Approval acknowledges the assessment; it is not launch authorization.
+
+**Simulate a source update** changes the notes and invalidates the current review.
+An existing pending delivery is cancelled when dispatch is attempted. Run a new
+assessment to review the changed snapshot. History retains the previous decision.
+
+Each scenario has an independent history. Demo sources, assessments, reviews, and
+inbox tasks persist under `.demo/`, which is excluded from Git. Stop and restart the
+app to verify persistence. The fixed assessment date of August 8, 2026 makes freshness
+checks reproducible; these are historical demo assessments, not current launch decisions.
+Set `READINESS_DEMO_DIR` to choose another demo storage directory. On a shared server,
+all visitors share this storage: this UI is intended for local demonstration and does
+not provide user authentication or per-user authorization. Live Anthropic inference
+remains available through the CLI, while this UI intentionally uses simulated responses.
+
+`tests/test_streamlit_app.py` exercises the real UI widgets with Streamlit AppTest:
+review gates, required reasons, evidence metrics, source invalidation, scenario isolation,
+restart persistence, and duplicate-free delivery recovery. The UI's saved assessment can
+also be downloaded as JSON from **History**.
+
 ## Enforced Readiness Rules
 
 A launch assessment must preserve known business constraints even when the model

@@ -39,6 +39,10 @@ class MockLLMClient(LLMClient):
                 f"and require human review."
             )
 
+        quality_titles = [s.title for s in context.signals if s.signal_id.startswith('DQ-')]
+        if quality_titles:
+            summary_parts.append(f"Data quality requires review: {'; '.join(quality_titles)}.")
+
         executive_summary = " ".join(summary_parts) or "No significant risks detected."
 
         actions = []
