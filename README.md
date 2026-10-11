@@ -1,486 +1,236 @@
-# Launch Readiness Copilot
+# Retail Campaign Readiness Agentic Workflow
 
-A reference implementation of an AI-assisted launch readiness system that synthesizes operational signals across inventory, fulfillment, merchandising, and customer feedback into a structured launch assessment.
+**Before campaign traffic begins, are the products available, product pages ready, campaign tasks complete, and unresolved risks visible to the people responsible?**
 
-Rather than asking an LLM to inspect raw business data and make an unconstrained judgment, the application first analyzes each domain deterministically, assembles the results into a typed `LaunchReadinessContext`, and then gives the model that bounded context for reasoning and explanation.
+This agentic workflow brings those checks into one reviewable process. It combines deterministic retail analysis with LLM model synthesis and inference, persists the assessment and its evidence, records human review, and delivers an approved follow-up task.
 
-## Run the Example
+The implementation demonstrates architectural patterns used in operational AI systems: explicit business contracts, workflow state management, human approval gates, provider abstraction, and recoverable downstream execution.
 
-From the repository root (Python 3.10 or later):
+A Streamlit interface makes the workflow inspectable through both successful and deliberately failing scenarios.
 
-```bash
-python -m pip install -r requirements.txt
-LLM_BACKEND=mock python -m app.main
-python -m pytest -q
+## Capabilities demonstrated
+
+| Capability | Implementation | Evidence |
+|---|---|---|
+| **Workflow orchestration** | Explicit stages for source validation, domain analysis, model assessment, policy enforcement, review, and delivery | Shared Python services used by the CLI and Streamlit |
+| **Durable workflow state** | SQLite stores assessments, source fingerprints, review decisions, queued deliveries, and delivery attempts | Persistence and restart tests in `tests/test_workflow.py` and `tests/test_delivery.py` |
+| **Human approvals** | Review requires attribution and a reason; blocked, unavailable, or stale assessments cannot be approved | Approval-gate and competing-review tests |
+| **Reliable downstream execution** | Persisted delivery intent, stable idempotency key, transactional local dispatch, and deduplicating receiver | Lost-response, interruption, and concurrent-worker tests |
+| **Python development** | Modular application services, typed domain models, provider adapters, validators, and connectors | Implementation under `app/`; automated test suite |
+| **API and JSON schema integration** | OpenAI Responses API requests structured output using a strict JSON Schema; application validation checks business conditions and evidence references | `app/llms/openai_client.py` and `tests/test_openai_client.py` |
+| **Model provider independence** | `LLMClient` interface supports OpenAI, Anthropic, and mock implementations | Provider factory and separate adapters under `app/llms/` |
+| **Framework-agnostic architecture** | Business rules and workflow state live in ordinary Python services, independently of an agent orchestration framework | Separate analyzer, policy, model, workflow, and delivery boundaries |
+| **Execution traceability** | Saved findings, source evidence, original model response, enforced result, review decision, and delivery history | UI evidence and history views; persistence tests |
+| **Inference provenance** | Saved assessments identify live or simulated mode, provider, and model; OpenAI responses also record response ID and token usage when available | Provider metadata and UI tests |
+
+The repository implements a **local reference workflow**. Remote enterprise integrations, OAuth, webhooks, distributed workers, and production hosting remain additional implementation work.
+
+Extend source adapters to retrieve versioned records from retail APIs, Google Workspace, Box, or DAM systems. Replace the local inbox with an authenticated enterprise task connector that preserves delivery idempotency. Validated source-change webhooks can trigger reassessment, while enterprise identity integration can control review and approval permissions.
+
+## Business process
+
+The workflow coordinates information needed by merchandising, inventory, campaign, and product-quality teams.
+
+1. **Validate sources.** Reject malformed inputs before requesting model inference.
+2. **Analyze operational conditions.** Identify stock shortages, catalog issues, incomplete campaign tasks, customer-feedback themes, and data-quality gaps.
+3. **Run the AI assessment.** Ask one model to interpret the structured findings and propose evidence-linked actions.
+4. **Enforce readiness policy.** Validate the response and preserve mandatory business constraints.
+5. **Persist the assessment.** Save its findings, evidence, source fingerprint, model output, and enforced result.
+6. **Record human review.** Associate the decision with the specific assessed snapshot.
+7. **Deliver approved follow-up.** Queue a task, execute the handoff, and record the outcome.
+
+**Approval acknowledges an assessment. It does not authorize a launch, clear findings, or change an At Risk assessment to Ready.**
+
+## Architecture and model boundary
+
+```mermaid
+flowchart TD
+    Data["Retail source data"] --> Checks["Python checks and structured findings"]
+    Checks --> AI["One AI agent: interpretation and proposed actions"]
+    AI --> Policy["Python: validate output and enforce business rules"]
+    Policy --> Review["Saved assessment and human review"]
+    Review --> Gate{"Approved and current?"}
+    Gate -->|Yes| Delivery["Follow-up delivery and recorded outcome"]
+    Gate -->|No| Hold["Retain findings; resolve or reassess"]
 ```
 
-The mock example requires no API key. For live inference, set `LLM_BACKEND=anthropic`
-and `ANTHROPIC_API_KEY` in your environment before running the application.
+**The model supplies interpretation and proposed actions. Python enforces the rules and manages workflow state, approval gates, and delivery.**
 
-## Interactive Streamlit Demo
+### Where the AI fits
 
-Run from the repository root after installing `requirements.txt`:
+This is a **single-agent, AI-assisted workflow with deterministic checks**. One model reasons over structured operational findings, synthesizes risks across domains, and proposes evidence-linked follow-up actions.
+
+For example, low inventory, an incomplete campaign task, and customer sizing feedback may each be understandable separately. The model can interpret their relationship and explain what the combination means for the campaign team.
+
+Python establishes the findings, validates the model’s response, enforces mandatory readiness rules, and manages review and delivery. Those controls make model reasoning usable within an accountable business process.
+
+The current agent performs a bounded assessment. It does not independently select tools, repeatedly plan actions, or coordinate other agents. Follow-up execution happens through application services after human approval.
+
+### Why one agent?
+
+The business problem calls for one consolidated readiness assessment. Inventory thresholds, required campaign tasks, input contracts, and data-quality checks can be defined and tested in Python. The model adds value by interpreting structured findings across domains, explaining their implications, and proposing follow-up actions.
+
+A single reasoning agent therefore fits the work. Multi-agent orchestration would introduce additional model calls, coordination logic, and failure paths without a demonstrated benefit for this scope. It could also increase inference cost, latency, and maintenance demands. This implementation keeps the workflow accessible to Python engineers without requiring an agent orchestration framework.
+
+Multi-agent execution would become worth evaluating if the workflow developed distinct reasoning tasks—for example, independent specialist assessments, investigation across multiple systems, or iterative planning that benefits from separate agents.
+
+The existing analyzer, model, policy, and workflow interfaces provide boundaries for that expansion. Adding agents would still require explicit coordination contracts and evaluation of whether they improve outcomes enough to justify the additional complexity.
+
+## Reliability and workflow controls
+
+### Enforced business decisions
+
+- Known blockers enforce **Not Ready**, even when the model recommends Ready.
+- Unresolved conflicts require human review.
+- Source presence below 80% prevents Ready; below 60% also requires review.
+- Data-quality findings require review and cap confidence at Medium.
+- Invalid model output produces no proposed actions, Low confidence, and required review. Known blockers remain Not Ready; otherwise the result becomes Unknown.
+- Recommended actions must reference findings present in the assessed context.
+
+### Snapshot-specific review
+
+Each saved assessment includes a fingerprint of its source files and an assessment date.
+
+Changed sources or a changed assessment date require reassessment. The previous decision remains in history but cannot serve as current approval.
+
+Review decisions are recorded transactionally. Competing reviews cannot overwrite the first recorded decision.
+
+### Recoverable delivery
+
+The application persists a delivery intent before attempting the handoff. A stable key identifies the task associated with an assessment.
+
+If the receiver accepts the task but its response is lost, a retry uses the same key. The local receiver returns the existing task rather than creating another.
+
+Pending and failed deliveries survive restart. Dispatch checks approval validity again; stale snapshots cancel delivery. Already delivered tasks remain historical records and are not automatically recalled.
+
+### Provider failures
+
+The OpenAI adapter handles authentication errors, rate limits, connection failures, incomplete responses, refusals, and invalid output through explicit assessment failures.
+
+Requests use a bounded timeout. Automatic SDK retries are disabled for this adapter. Raw provider error messages are excluded from the saved assessment failure.
+
+## Framework and integration boundaries
+
+| Boundary | Current implementation | Extension point |
+|---|---|---|
+| Operational sources | Local JSON, CSV, Markdown, and freshness metadata | Source adapters for enterprise APIs or versioned exports |
+| Model inference | OpenAI, Anthropic, and mock adapters behind `LLMClient` | Additional model providers implementing the same interface |
+| Business policy | Explicit Python readiness rules | Additional domain policies with independent verification |
+| Review | Persisted decision with reviewer attribution | Authenticated identity and role-based authorization |
+| Downstream execution | `TaskConnector` with an idempotent local task inbox | Remote task or enterprise-system adapter |
+| Persistence | Local SQLite transactions | Storage and worker design appropriate to deployment requirements |
+| User interaction | Streamlit and CLI over shared services | Additional interfaces calling those services |
+
+OpenAI integration uses the provider SDK and Responses API. The application does not depend on the OpenAI Agents SDK, LangChain, or another agent orchestration framework.
+
+The downstream connector currently demonstrates the handoff contract locally. A remote implementation must preserve idempotency semantics and use bounded request timeouts.
+
+## Run the interactive demo
+
+From the repository root:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+```
+
+For live OpenAI inference, configure your API key:
+
+```bash
+python -m app.configure_openai
+```
+
+The command prompts privately and saves the key in `.streamlit/secrets.toml`, which is excluded from Git. The UI also accepts `OPENAI_API_KEY` from the server environment.
+
+Launch the application:
 
 ```bash
 python -m streamlit run streamlit_app.py
 ```
 
-Open the local URL printed by Streamlit (normally `http://localhost:8501`). No API
-key or external account is needed. The UI uses synthetic retail data and a simulated
-model. It calls the same `WorkflowService` and `DeliveryService` as the CLI.
+Open the URL printed by Streamlit, normally `http://localhost:8501`.
 
-| Scenario | What a reviewer can observe |
-| --- | --- |
-| Ready launch | Complete sources and stock, approval with a reason, and delivery of one follow-up task |
-| Blocked launch | Inventory evidence explains Not Ready; approval is disabled and rejection remains available |
-| Incomplete data | All sources are present but an expected product variant is missing; review is required |
-| Stale inventory | Sufficient quantities do not hide an outdated inventory snapshot |
-| Model failure | Malformed model output produces Unknown, Low confidence, and no approved actions |
-| Model contradicts a blocker | Compare the model's Ready claim with the enforced Not Ready result |
-| Delivery response lost | First delivery fails after acceptance; retry completes with one inbox task and two attempts |
+**Live OpenAI** is the default assessment mode. It sends synthetic scenario findings to OpenAI and incurs API usage. The default model is `gpt-4.1-mini`; `OPENAI_MODEL` can select another compatible model.
 
-Start with **Run assessment**. Inspect **Findings & evidence**, then open
-**Review & follow-up**, enter a reviewer and reason, and approve or reject. For an
-approved assessment, **Queue follow-up task**, then **Deliver task**. In the lost-response
-scenario, use **Retry delivery** and inspect the inbox task count and attempt history.
-Approval acknowledges the assessment; it is not launch authorization.
+**Simulated demo** exercises the workflow without an API key. Missing live credentials do not trigger an automatic mock fallback.
 
-**Simulate a source update** changes the notes and invalidates the current review.
-An existing pending delivery is cancelled when dispatch is attempted. Run a new
-assessment to review the changed snapshot. History retains the previous decision.
+Live and simulated assessments have separate histories. Each saved assessment identifies its inference mode.
 
-Each scenario has an independent history. Demo sources, assessments, reviews, and
-inbox tasks persist under `.demo/`, which is excluded from Git. Stop and restart the
-app to verify persistence. The fixed assessment date of August 8, 2026 makes freshness
-checks reproducible; these are historical demo assessments, not current launch decisions.
-Set `READINESS_DEMO_DIR` to choose another demo storage directory. On a shared server,
-all visitors share this storage: this UI is intended for local demonstration and does
-not provide user authentication or per-user authorization. Live Anthropic inference
-remains available through the CLI, while this UI intentionally uses simulated responses.
+### Review scenarios
 
-`tests/test_streamlit_app.py` exercises the real UI widgets with Streamlit AppTest:
-review gates, required reasons, evidence metrics, source invalidation, scenario isolation,
-restart persistence, and duplicate-free delivery recovery. The UI's saved assessment can
-also be downloaded as JSON from **History**.
+| Scenario | What to inspect |
+|---|---|
+| Ready launch | Assessment → approval → queued task → successful delivery |
+| Blocked launch | Inventory evidence, Not Ready status, and unavailable approval |
+| Incomplete data | Missing variant coverage despite all source files being present |
+| Stale inventory | Outdated stock information and required review |
+| Model failure | Explicit failure result with no validated actions |
+| Model contradicts a blocker | Original Ready recommendation versus enforced Not Ready |
+| Delivery response lost | Failed attempt, successful retry, and one inbox task |
 
-## Enforced Readiness Rules
+The **Model failure** and **Model contradicts a blocker** scenarios deliberately simulate model responses, even when live mode is selected. The UI labels them explicitly; they do not make live API calls.
 
-A launch assessment must preserve known business constraints even when the model
-returns a contradictory recommendation. Python enforces these rules after inference;
-the model supplies explanations and proposed actions.
+Start with **Ready launch → Run assessment**. Inspect **Findings & evidence**, then record a reviewer and reason in **Review & follow-up**. Approve the assessment, queue its follow-up, and deliver the task.
 
-| Business capability | Implementation | Verification |
-| --- | --- | --- |
-| Known blockers prevent a Ready assessment | `app/policy/readiness.py` | `tests/test_readiness_policy.py` tests a model returning Ready despite a blocker |
-| Unresolved conflicts require review | Policy checks conflict resolution state | Tests cover unresolved, needs-review, and resolved conflicts |
-| Missing sources prevent unqualified readiness | Below 80% completeness: at least At Risk; below 60%: required review | Boundary tests cover both thresholds |
-| Quality feedback gets human attention | Feedback signals requiring interpretation trigger review and at least At Risk | Product quality review test |
-| Model uncertainty remains visible | Unknown/invalid status requires review; stricter model status and lower confidence are preserved | Unavailable-model and conservative-assessment tests |
+Use **Simulate a source update** to invalidate an earlier review. Inspect the retained historical decision, then run a new assessment.
 
-The completeness score currently measures **presence of the five input sources**,
-not their freshness, validity, or coverage of every product variant. Confidence is
-capped using that score; it is not a calibrated probability of correctness.
+Demo records persist under `.demo/`. The fixed assessment date of August 8, 2026 makes freshness checks reproducible.
 
-The assessment boundary validates the six required response fields, their types,
-allowed status/confidence values, and review-reason consistency. Each proposed action
-must contain `action`, `signal_ids`, and `conflict_fields`; every reference must exist
-in the current context and at least one reference is required. String-only actions
-from the earlier prototype are no longer accepted.
-
-Invalid assessments are rejected in full. The report shows an explicit unavailable
-assessment with no proposed model actions, Low confidence, and required human review.
-Known blockers still enforce Not Ready; otherwise an invalid assessment remains
-Unknown. Invalid JSON, interrupted generation, and unexpected provider content also
-produce this reviewable failure. Raw malformed output is not displayed as a summary.
-
-| Business capability | Implementation | Verification |
-| --- | --- | --- |
-| Prevent malformed assessments from entering reports | `app/validation/assessment.py`, called by `enforce_readiness` | `tests/test_assessment_validation.py` tests wrong types, missing/extra fields, and inconsistent review metadata |
-| Require traceable proposed actions | Explicit signal and conflict reference arrays checked against the current context | Tests reject invented references and actions with no references |
-| Surface model/provider failures for review | Anthropic adapter failure handling plus the shared policy boundary | Stubbed-provider tests cover invalid JSON, truncation, empty/unexpected content, and non-object JSON |
-
-Reference validation proves that cited findings exist; it does not prove the action
-text is supported by those findings. Generated prose may still contradict the enforced
-status. Semantic evaluation and downstream authorization remain
-subsequent workflow upgrades.
-
-## Input Validation and Data Quality
-
-Input contracts are checked before domain analysis. Missing/unreadable source files,
-malformed input structures, invalid launch dates, duplicate identifiers, negative
-inventory quantities, invalid CSV booleans, and malformed review records stop the CLI
-with an explicit input error and nonzero exit status. No model call is made. The
-launch date is never silently replaced with today's date.
-
-Missing or blank descriptive catalog fields remain business findings rather than
-being filled in. Valid but empty source collections reduce the source-presence score.
-The report labels this metric **Source Presence**, so 100% does not imply complete
-or current business information.
-
-Inventory coverage is checked against the Cartesian product of each catalog product's
-listed colors and sizes. Missing variant records and inventory variants that do not
-match the catalog become `DQ-` findings. Missing records do not mean zero stock.
-This prototype assumes every listed color/size combination belongs to the launch;
-a production connector should supply an explicit expected assortment when that
-assumption does not hold. Product association uses the catalog SKU base followed by
-`-`; ambiguous matches require review.
-
-Source freshness uses optional `data/source_metadata.json`, keyed by source filename:
-
-```json
-{
-  "inventory.csv": {
-    "updated_at": "2026-08-05",
-    "max_age_days": 2
-  }
-}
-```
-
-Each source can set its own maximum age. Sources without metadata have **unknown
-freshness**. Dates after the assessment date and sources older than their specified
-limit also become findings. File modification times and free-text dates are not used
-as substitutes for explicit metadata. Invalid metadata stops assessment.
-
-Use an explicit date to reproduce freshness checks:
+## Verification
 
 ```bash
-LLM_BACKEND=mock python -m app.main --as-of 2026-08-08
+python -m pytest -q
 ```
 
-Without `--as-of`, freshness is checked against today's date. The historical sample
-has no metadata and only partial variant records; its quality findings are intentional.
-Any `DQ-` finding requires human review and caps confidence at Medium. These checks do
-not establish source authenticity, calibrated confidence, or the semantic accuracy
-of free-text analysis.
-
-The implementation is in `app/validation/inputs.py` and
-`app/analyzers/data_quality_analyzer.py`. `tests/test_input_quality.py` verifies invalid
-inputs stop before analysis/inference, source gaps remain visible, and freshness
-boundaries behave predictably.
-
-## Persisted Assessments and Human Review
-
-`app/workflow/service.py` provides the shared Python service for the workflow CLI
-and the planned Streamlit UI. SQLite stores each assessment's typed context and
-evidence, original model response, enforced result, assessment date, creation time,
-and SHA-256 fingerprint of all five sources plus optional freshness metadata.
-
-Run a historical sample assessment and inspect saved history:
-
-```bash
-LLM_BACKEND=mock python -m app.workflow_cli --db readiness.sqlite3 --as-of 2026-08-08 assess
-python -m app.workflow_cli --db readiness.sqlite3 --as-of 2026-08-08 history
-python -m app.workflow_cli --db readiness.sqlite3 --as-of 2026-08-08 show ASSESSMENT_ID
-```
-
-Replace `ASSESSMENT_ID` with the ID returned by `assess`. The sample contains blockers,
-so it can be rejected but cannot be approved:
-
-```bash
-python -m app.workflow_cli --db readiness.sqlite3 --as-of 2026-08-08 review ASSESSMENT_ID --reviewer "Demo reviewer" --decision reject --reason "Resolve launch blockers and data quality findings."
-```
-
-| Business behavior | Enforced implementation | Evidence |
-| --- | --- | --- |
-| Retrieve evidence and decisions after restart | SQLite assessment snapshots and review records | Restart/persistence test in `tests/test_workflow.py` |
-| Prevent approval of blocked or unavailable assessments | Approval allowed only for Ready or At Risk assessments | Blocker and invalid-model approval tests |
-| Tie review to the assessed data | Byte-content fingerprints and assessment-date check | Source, metadata, and date-change tests |
-| Preserve prior decisions when sources change | History keeps the decision; current view becomes reassessment_required | Previous-approval test |
-| Avoid overwriting competing decisions | Transactional review with one decision per assessment | Concurrent approval/rejection test |
-
-States are `pending_review`, `approved`, `rejected`, and `reassessment_required`.
-Once reviewed, an assessment cannot be reviewed again; create a new assessment.
-An At Risk assessment may be approved with a reason, but retains its At Risk status
-and findings. Approval records a review; it does not authorize or perform a launch.
-
-The source fingerprint is checked before and after analysis/inference; detected
-changes prevent saving the assessment. Review checks the current sources and date.
-The workflow requires reassessment on a new assessment date, even if the source
-bytes are unchanged, so freshness checks are repeated. `--as-of` supports reproducible
-historical demonstrations; use the default current date for current reviews.
-
-**Demo boundary:** reviewer names are self-declared attribution, not authenticated
-identities. Role authorization and identity-provider integration are not implemented.
-The local database is not tamper-proof, and fingerprint checks do not lock externally
-mutable files; a production integration needs versioned source snapshots. A record
-retrieved without a source directory has `snapshot_current: null`; its historical
-review state does not establish current approval validity. The CLI always checks
-sources when showing records. Streamlit will call these same services.
-
-## Approved Follow-up Delivery
-
-After a human approves a current assessment, the application can queue a follow-up
-task in a durable outbox, then deliver it to a separate local task inbox. The task
-coordinates review follow-up; it does **not** authorize a launch, clear findings,
-or change an At Risk assessment to Ready. The model proposes action text; Python
-constructs the operation and the caller supplies the connector.
-
-For a current, approved Ready or At Risk assessment, run:
-
-```bash
-python -m app.workflow_cli --as-of 2026-08-08 enqueue ASSESSMENT_ID
-python -m app.workflow_cli --as-of 2026-08-08 dispatch DELIVERY_ID
-python -m app.workflow_cli deliveries
-python -m app.workflow_cli tasks
-```
-
-Use the same `--db`, `--data-dir`, and `--as-of` values used for assessment/review.
-`enqueue` returns the delivery ID. The original sample has blockers and cannot be
-approved or delivered; `tests/test_delivery.py` constructs a valid ready assortment
-to exercise the successful path. `--inbox-db` selects the downstream SQLite store.
-
-| Business need | Implementation | Reviewable evidence |
-| --- | --- | --- |
-| Keep unreviewed or stale results from producing downstream work | Current approval checked at queue time and immediately before sending | Unapproved and stale-snapshot tests in `tests/test_delivery.py` |
-| Recover delivery after restart | Persisted payload and pending/failed delivery state | Restart and retry tests |
-| Avoid duplicate tasks when a response is lost | Stable key per assessment; receiver deduplicates atomically | Timeout after receiver acceptance, followed by retry |
-| Inspect what happened | Append-only delivery attempts and stored receipt | Failure type, cancellation, and successful receipt assertions |
-| Prevent competing local workers from sending twice | Serialized SQLite dispatch transaction | Concurrent worker test |
-
-Delivery states are `pending`, `failed`, `delivered`, and `cancelled`. Repeat enqueue
-returns the existing intent. Repeat dispatch of a delivered/cancelled intent makes no
-new call. Failed intents can be retried by dispatching the same ID. Source/date changes
-cancel pending or failed delivery; a new approved assessment creates a new intent.
-Already delivered tasks remain historical records and are not automatically recalled.
-
-This is a **local integration demonstration**, not an authenticated remote integration.
-`TaskConnector` is the replacement boundary. Remote adapters must support the same
-idempotency key semantics and bounded timeouts; otherwise ambiguous failures cannot
-guarantee duplicate-free retries. Dispatch holds a workflow database write transaction
-while calling the connector, suitable for this small local demo rather than a scalable
-worker queue. Source files must remain stable during sending: freshness is checked
-before dispatch, but file writes and an external side effect cannot be made atomic.
-Exception types are recorded; raw exception strings are omitted to avoid copying
-credentials or response bodies into history. There are no webhooks, OAuth, authenticated
-reviewers, automatic retry scheduling, or external notifications yet.
-
-## Architecture
-
-```text
-Inventory Data ───────► Inventory Analyzer ──────┐
-                                                 │
-Fulfillment Data ─────► Fulfillment Analyzer ────┤
-                                                 │
-Merchandising Data ───► Merchandising Analyzer ──┼──► LaunchReadinessContext
-                                                 │             │
-Customer Feedback ────► Feedback Analyzer ───────┘             ▼
-                                                         LLM Reasoning
-                                                               │
-                                                               ▼
-                                                     Readiness Assessment
-```
-
-The core pipeline is:
-
-```text
-Raw operational data
-        ↓
-Domain-specific analyzers
-        ↓
-Structured findings
-        ↓
-Typed launch-readiness context
-        ↓
-Bounded LLM reasoning
-        ↓
-Human-readable assessment
-```
-
-## Why This Architecture?
-
-Launch readiness is not one question.
-
-It is an aggregation problem across several different operational domains, each with its own signals and failure conditions.
-
-The application separates:
-
-- **fact discovery** from **reasoning**
-- **domain analysis** from **cross-domain synthesis**
-- **structured system state** from **generated explanation**
-
-The model therefore does not need to rediscover facts that application code can establish first.
-
-Instead, it reasons over an explicit representation of what the system currently knows.
-
-## Domain Analyzers
-
-The application contains dedicated analyzers for the major launch-readiness domains represented in the prototype.
-
-### Inventory
-
-Evaluates inventory-related launch conditions and surfaces relevant availability or stock concerns.
-
-### Fulfillment
-
-Examines fulfillment signals that may affect the ability to support a launch successfully.
-
-### Merchandising
-
-Evaluates merchandising readiness independently from inventory and fulfillment state.
-
-### Customer Feedback
-
-Extracts and classifies relevant signals from customer feedback so qualitative information can participate in the same readiness assessment as structured operational data.
-
-Each analyzer produces structured findings rather than a final launch decision.
-
-## Typed Launch Context
-
-The outputs of the individual analyzers are assembled into a shared `LaunchReadinessContext`.
-
-This acts as the semantic contract between deterministic analysis and model reasoning.
-
-```text
-Inventory findings
-Fulfillment findings
-Merchandising findings
-Customer feedback
-        │
-        ▼
-LaunchReadinessContext
-        │
-        ▼
-Claude Sonnet 4.5
-```
-
-Using an explicit domain model provides several advantages:
-
-- the model receives a predictable input structure
-- individual analyzers can evolve independently
-- findings can be inspected before model invocation
-- deterministic behavior can be tested without an LLM
-- model behavior can be evaluated against a known system state
-- new readiness domains can be added without redesigning the entire reasoning layer
-
-The ontology therefore serves as more than an output schema. It defines the concepts the reasoning layer is allowed to operate over.
-
-## Model Boundary
-
-Claude Sonnet 4.5 is responsible for **synthesis, interpretation, and explanation**.
-
-It is not responsible for discovering every underlying operational fact from scratch.
-
-```text
-Application code:
-    discover → classify → structure
-
-Claude Sonnet 4.5:
-    synthesize → reason → explain
-```
-
-This creates a narrower reasoning problem for the model and makes the system easier to inspect and evaluate.
-
-If an underlying analyzer produces an incorrect finding, that can be investigated independently from whether the model reasoned correctly over the findings it received.
-
-The model integration is also abstracted behind an `LLMClient` interface. The Anthropic implementation provides live Claude inference, while a mock implementation supports deterministic development and testing without requiring model calls.
-
-## Cross-Domain Reasoning
-
-The value of the reasoning layer emerges when signals interact.
-
-A condition that looks acceptable within one domain may become important when combined with findings elsewhere in the launch.
-
-For example:
-
-```text
-Inventory risk
-      +
-Fulfillment constraint
-      +
-Customer feedback signal
-      ↓
-Cross-domain launch concern
-```
-
-The structured context gives the model visibility across those domains without requiring each analyzer to encode every possible cross-domain relationship itself.
-
-This preserves deterministic domain logic while allowing more flexible synthesis at the final reasoning stage.
-
-## Evaluation
-
-The repository includes tests across:
-
-- domain analyzers
-- pipeline behavior
-- prompt construction
-- ontology / typed context
-
-This separation is intentional.
-
-Analyzer behavior can be tested deterministically, while model-facing components can be evaluated independently.
-
-That makes it easier to identify whether a failure originated in:
-
-1. source analysis
-2. context construction
-3. prompt construction
-4. model reasoning
-
-rather than treating the entire AI pipeline as a single opaque operation.
-
-The abstract LLM client and mock implementation also allow pipeline behavior to be tested without coupling deterministic tests to live model availability or behavior.
-
-## Project Structure
-
-```text
-app/
-  analyzers/        Domain-specific launch analysis
-  llms/             LLM interface, Anthropic client, mock client, and factory
-  prompts/          Model reasoning instructions
-  ontology/         Typed launch-readiness domain model
-  main.py           Application entry point
-
-data/
-  Sample operational and customer-feedback inputs
-
-tests/
-  Analyzer, pipeline, prompt, and ontology tests
-```
-
-## Technology
-
-- **Python**
-- **Anthropic Claude Sonnet 4.5** for cross-domain synthesis and readiness reasoning
-- **Anthropic Python SDK**
-- **Typed Python domain models / ontology**
-- **Deterministic domain analyzers**
-- **Abstract LLM client interface** supporting interchangeable live and mock backends
-- **Fixture-based test data**
-- **Automated tests** covering analyzers, pipeline behavior, prompt construction, and ontology contracts
-
-## Extending the System
-
-The architecture is designed so additional operational domains can be incorporated by adding another analyzer and extending the shared launch context.
-
-For example:
-
-```text
-Pricing ──────────────► Pricing Analyzer ─────────┐
-                                                  │
-Marketing ────────────► Campaign Analyzer ────────┼──► LaunchReadinessContext
-                                                  │
-Returns ──────────────► Returns Analyzer ─────────┘
-```
-
-The reasoning layer can then incorporate those findings without requiring raw access to every underlying source or embedding all domain logic inside the prompt.
-
-In a larger implementation, the same boundary could sit over APIs, databases, event streams, or other operational systems rather than local prototype data.
-
-## Scope
-
-This repository is a prototype demonstrating an architectural pattern for AI-assisted operational decision support.
-
-It is intentionally bounded and does not represent a complete production launch-management platform.
-
-The project focuses on:
-
-- domain-specific deterministic analysis
-- typed representations of business state
-- separation of fact discovery from model reasoning
-- cross-domain synthesis
-- testable AI pipelines
-- interchangeable model integrations
-
-The central design principle is:
+The current suite contains **169 passing tests**, covering:
+
+- Input contracts, domain analysis, and readiness policy.
+- Model response validation and evidence-reference checks.
+- Provider request construction and failure handling.
+- Persisted assessments, review gates, and competing decisions.
+- Source-change invalidation.
+- Delivery recovery, interruption, and deduplication.
+- Streamlit interactions and separation of live and simulated histories.
+- Private key configuration and database migration.
+
+Automated provider tests use stubs. They verify integration behavior and operational controls; they do not establish live model quality.
+
+## Scope and production considerations
+
+The implemented controls support inspection of production-oriented design choices. This repository does not establish a production deployment, distributed-system performance, or enterprise integration history.
+
+Additional production work includes:
+
+- Authenticated reviewers and role-based authorization.
+- Enterprise connectors, OAuth, and webhook handling.
+- Versioned source snapshots and event-driven reassessment.
+- Distributed workers, appropriate storage, and retry scheduling.
+- Operational monitoring, alerts, deployment management, and performance testing.
+- Semantic evaluation of generated explanations and proposed actions.
+
+Source presence measures populated inputs, not complete business knowledge. Expected variant coverage currently assumes every catalog-listed color/size combination belongs to the launch. Freshness depends on explicit source metadata.
+
+Keyword analysis can misread negation. Some discrepancy checks represent dependencies rather than contradictory facts. Reference validation establishes that cited findings exist, not that generated wording is supported by them.
+
+SQLite history is not tamper-proof. File fingerprint checks do not lock mutable sources. Local dispatch serializes workers while calling the connector. On a shared server, UI visitors share demo storage.
+
+The retail scenario covers campaign operations and product readiness. It does not currently implement DAM, image generation, retouching, rendering, or integrations with Photoshop, Figma, ComfyUI, Google Workspace, or Box.
+
+## Code map
+
+| Location | Responsibility |
+|---|---|
+| `app/analyzers/` | Operational findings and data-quality checks |
+| `app/ontology/` | Business concepts and evidence models |
+| `app/validation/` | Input and assessment contracts |
+| `app/policy/` | Mandatory readiness rules |
+| `app/llms/` | Provider interfaces and adapters |
+| `app/workflow/service.py` | Assessment persistence and human review |
+| `app/workflow/delivery.py` | Durable delivery and connector boundary |
+| `app/demo/` | Reproducible synthetic scenarios |
+| `streamlit_app.py` | Interactive workflow |
+| `app/workflow_cli.py` | Command-line workflow |
+| `tests/` | Behavior and failure verification |
 
 > **Structure what the system knows before asking the model what it means.**
