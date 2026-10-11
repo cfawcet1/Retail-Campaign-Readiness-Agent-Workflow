@@ -15,7 +15,7 @@ def analyze_catalog(catalog: dict) -> list[LaunchSignal]:
         name = product.get("name", "unknown")
 
         for field in REQUIRED_FIELDS:
-            if product.get(field) is None:
+            if product.get(field) is None or (isinstance(product.get(field), str) and not product[field].strip()):
                 signals.append(LaunchSignal(
                     signal_id=f"CAT-MISSING-{sku}-{field.upper()}",
                     domain=Domain.CATALOG,

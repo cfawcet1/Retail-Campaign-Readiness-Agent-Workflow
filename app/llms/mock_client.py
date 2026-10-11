@@ -1,5 +1,6 @@
 from app.llms.base import LLMClient
-from app.ontology.models import LaunchReadinessContext, Severity
+from app.policy.readiness import evaluate_readiness
+from app.ontology.models import LaunchReadinessContext, Severity, ResolutionStatus
 
 
 class MockLLMClient(LLMClient):
@@ -14,16 +15,13 @@ class MockLLMClient(LLMClient):
             if s.severity == Severity.HIGH
         ]
 
-        if blockers:
-            overall_status = "Not Ready"
-        elif high:
-            overall_status = "At Risk"
-        else:
-            overall_status = "Ready"
+        decision = evaluate_readiness(context)
+        overall_status = decision.overall_status
+        pending_conflicts = [c for c in context.conflicts if c.resolution != ResolutionStatus.RESOLVED]
 
         blocker_titles = [s.title for s in blockers]
         high_titles = [s.title for s in high[:2]]
-        conflict_count = len(context.conflicts)
+        conflict_count = len(pending_conflicts)
 
         summary_parts = []
         if blockers:
@@ -45,31 +43,21 @@ class MockLLMClient(LLMClient):
 
         actions = []
         for signal in blockers + high:
-            actions.append(
-                f"[{signal.signal_id}] Resolve: {signal.title}"
-            )
-        for conflict in context.conflicts:
-            actions.append(
-                f"[CONFLICT] Review discrepancy in '{conflict.field}' "
-                f"between {conflict.source_a} and {conflict.source_b}."
-            )
+            actions.append({
+                "action": f"Resolve: {signal.title}",
+                "signal_ids": [signal.signal_id],
+                "conflict_fields": [],
+            })
+        for conflict in pending_conflicts:
+            actions.append({
+                "action": f"Review discrepancy between {conflict.source_a} and {conflict.source_b}.",
+                "signal_ids": [],
+                "conflict_fields": [conflict.field],
+            })
 
-        if context.data_completeness_score >= 0.8:
-            confidence = "High"
-        elif context.data_completeness_score >= 0.5:
-            confidence = "Medium"
-        else:
-            confidence = "Low"
-
-        human_review_required = bool(blockers) or bool(context.conflicts)
-        human_review_reason = None
-        if human_review_required:
-            reasons = []
-            if blockers:
-                reasons.append("one or more launch blockers detected")
-            if context.conflicts:
-                reasons.append("unresolved cross-domain conflicts present")
-            human_review_reason = "Human review required: " + ", ".join(reasons) + "."
+        confidence = decision.confidence
+        human_review_required = decision.human_review_required
+        human_review_reason = "; ".join(decision.review_reasons) or None
 
         return {
             "overall_status": overall_status,

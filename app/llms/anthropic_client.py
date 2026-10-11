@@ -2,6 +2,7 @@ import os
 import json
 import anthropic
 from app.llms.base import LLMClient
+from app.validation.assessment import assessment_failure
 from app.ontology.models import LaunchReadinessContext
 from app.prompts.readiness_prompt import build_prompt
 
@@ -25,25 +26,15 @@ class AnthropicClient(LLMClient):
                     {"role": "user", "content": prompt}
                 ]
             )
-            raw = message.content[0].text
-        except anthropic.APIError as e:
-            return {
-                "overall_status": "Unknown",
-                "executive_summary": f"LLM call failed: {e}",
-                "recommended_actions": [],
-                "confidence": "Low",
-                "human_review_required": True,
-                "human_review_reason": "LLM call failed — human review required."
-            }
+            if message.stop_reason != "end_turn":
+                return assessment_failure("Model response did not complete normally.")
+            if not message.content or any(block.type != "text" for block in message.content):
+                return assessment_failure("Model returned unexpected content blocks.")
+            raw = "".join(block.text for block in message.content)
+        except anthropic.APIError:
+            return assessment_failure("Model API call failed.")
 
         try:
             return json.loads(raw)
         except json.JSONDecodeError:
-            return {
-                "overall_status": "Unknown",
-                "executive_summary": raw,
-                "recommended_actions": [],
-                "confidence": "Low",
-                "human_review_required": True,
-                "human_review_reason": "LLM returned unparseable response — human review required."
-            }
+            return assessment_failure("Model returned invalid JSON.")

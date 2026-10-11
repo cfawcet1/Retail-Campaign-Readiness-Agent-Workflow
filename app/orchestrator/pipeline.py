@@ -1,4 +1,6 @@
 from datetime import date
+from app.validation.inputs import validate_inputs, InputValidationError
+from app.analyzers.data_quality_analyzer import analyze_data_quality
 from app.loaders.catalog_loader import load_catalog
 from app.loaders.inventory_loader import load_inventory
 from app.loaders.feedback_loader import load_feedback
@@ -141,13 +143,22 @@ def extract_notes_excerpt(notes_text: str, max_chars: int = 1500) -> str:
     return excerpt[:max_chars]
 
 
-def run_pipeline(data_dir: str = "data") -> LaunchReadinessContext:
+def run_pipeline(data_dir: str = "data", as_of: date | None = None) -> LaunchReadinessContext:
 
-    catalog = load_catalog(f"{data_dir}/product_catalog.json")
-    inventory = load_inventory(f"{data_dir}/inventory.csv")
-    feedback = load_feedback(f"{data_dir}/customer_feedback.md")
-    checklist = load_checklist(f"{data_dir}/campaign_checklist.json")
-    notes_text = load_notes(f"{data_dir}/launch_notes.md")
+    def read_source(loader, filename):
+        try:
+            return loader(f"{data_dir}/{filename}")
+        except InputValidationError:
+            raise
+        except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+            raise InputValidationError(f"{filename}: input could not be loaded ({type(exc).__name__})") from exc
+
+    catalog = read_source(load_catalog, "product_catalog.json")
+    inventory = read_source(load_inventory, "inventory.csv")
+    feedback = read_source(load_feedback, "customer_feedback.md")
+    checklist = read_source(load_checklist, "campaign_checklist.json")
+    notes_text = read_source(load_notes, "launch_notes.md")
+    launch_date = validate_inputs(catalog, inventory, feedback, checklist, notes_text)
 
     signals: list[LaunchSignal] = []
     signals.extend(analyze_catalog(catalog))
@@ -155,18 +166,13 @@ def run_pipeline(data_dir: str = "data") -> LaunchReadinessContext:
     signals.extend(analyze_feedback(feedback))
     signals.extend(analyze_checklist(checklist))
     signals.extend(analyze_notes(notes_text))
+    signals.extend(analyze_data_quality(catalog, inventory, data_dir, as_of))
 
     conflicts = detect_conflicts(catalog, inventory, checklist, notes_text)
 
     completeness = compute_completeness_score(
         catalog, inventory, feedback, checklist, notes_text
     )
-
-    launch_date_str = catalog.get("launch_date", "")
-    try:
-        launch_date = date.fromisoformat(launch_date_str)
-    except ValueError:
-        launch_date = date.today()
 
     return LaunchReadinessContext(
         launch_name=catalog.get("launch", "Unknown Launch"),

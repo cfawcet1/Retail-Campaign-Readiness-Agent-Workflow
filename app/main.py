@@ -1,8 +1,11 @@
 import argparse
 import sys
+from datetime import date
+from app.validation.inputs import InputValidationError
 from app.orchestrator.pipeline import run_pipeline
 from app.llms.factory import get_llm_client
 from app.report.formatter import format_report
+from app.policy.readiness import enforce_readiness
 
 
 def main():
@@ -19,14 +22,15 @@ def main():
         default=None,
         help="Optional path to write report to file"
     )
+    parser.add_argument("--as-of", type=date.fromisoformat, default=None, help="Assessment date for source freshness (YYYY-MM-DD; default: today)")
     args = parser.parse_args()
 
     print("Running launch readiness pipeline...")
 
     try:
-        context = run_pipeline(data_dir=args.data_dir)
-    except FileNotFoundError as e:
-        print(f"Error loading data: {e}")
+        context = run_pipeline(data_dir=args.data_dir, as_of=args.as_of)
+    except InputValidationError as e:
+        print(f"Assessment stopped: invalid input: {e}")
         sys.exit(1)
 
     print(f"Pipeline complete. {len(context.signals)} signals detected, "
@@ -34,7 +38,7 @@ def main():
 
     print("Generating readiness assessment...")
     client = get_llm_client()
-    llm_response = client.generate(context)
+    llm_response = enforce_readiness(context, client.generate(context))
 
     report = format_report(context, llm_response)
 

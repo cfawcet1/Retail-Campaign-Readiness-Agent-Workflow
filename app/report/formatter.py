@@ -8,7 +8,7 @@ def format_report(context: LaunchReadinessContext, llm_response: dict) -> str:
     lines.append("=" * 60)
     lines.append(f"LAUNCH READINESS REPORT: {context.launch_name.upper()}")
     lines.append(f"Launch Date: {context.launch_date.isoformat()}")
-    lines.append(f"Data Completeness: {context.data_completeness_score:.0%}")
+    lines.append(f"Source Presence: {context.data_completeness_score:.0%}")
     lines.append("=" * 60)
 
     status = llm_response.get("overall_status", "Unknown")
@@ -51,7 +51,8 @@ def format_report(context: LaunchReadinessContext, llm_response: dict) -> str:
     actions = llm_response.get("recommended_actions", [])
     if actions:
         for i, action in enumerate(actions, 1):
-            lines.append(f"  {i}. {action}")
+            references = action["signal_ids"] + action["conflict_fields"]
+            lines.append(f"  {i}. [{', '.join(references)}] {action['action']}")
     else:
         lines.append("  No actions recommended.")
 
